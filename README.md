@@ -1,9 +1,9 @@
 # Pokémon Fusion Art — Simple All-Functions Demo
 
 This repo provides a minimal, **fully working** pipeline with:
-- **合成 (Fusion):** pixel fusion with simple part masks and palette harmonization (`POST /fuse`).
-- **迁移 (Style Transfer):** stylized output via `POST /style` (tries PyTorch if installed, otherwise filter-based).
-- **整合 (Integration + Web):** a Vite + React UI to run both and preview results.
+- **Fusion:** pixel fusion with simple part masks and palette harmonization (`POST /fuse`).
+- **Style Transfer:** stylized output via `POST /style` (tries PyTorch if installed, otherwise filter-based).
+- **Integration + Web:** a Vite + React UI to run both and preview results.
 
 ## Run
 
@@ -15,7 +15,6 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m uvicorn app:app --reload
-# http://127.0.0.1:8000/health
 ```
 
 ### Frontend (new terminal)
@@ -23,7 +22,6 @@ python -m uvicorn app:app --reload
 cd frontend
 npm install
 npm run dev
-# open http://127.0.0.1:5173
 ```
 
 ## Customize
