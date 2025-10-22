@@ -1,4 +1,4 @@
-# Pokémon Fusion Art — Simple All-Functions Demo
+# Pokémon Fusion Art
 
 This repo provides a minimal, **fully working** pipeline with:
 - **Fusion:** pixel fusion with simple part masks and palette harmonization (`POST /fuse`).
