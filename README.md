@@ -1,9 +1,9 @@
 # Pokémon Fusion Art — Simple All-Functions Demo
 
 This repo provides a minimal, **fully working** pipeline with:
-- **合成 (Fusion):** pixel fusion with simple part masks and palette harmonization (`POST /fuse`).
-- **迁移 (Style Transfer):** stylized output via `POST /style` (tries PyTorch if installed, otherwise filter-based).
-- **整合 (Integration + Web):** a Vite + React UI to run both and preview results.
+- **Fusion:** pixel fusion with simple part masks and palette harmonization (`POST /fuse`).
+- **Style Transfer:** stylized output via `POST /style` (tries PyTorch if installed, otherwise filter-based).
+- **Integration + Web:** a Vite + React UI to run both and preview results.
 
 ## Run
 
