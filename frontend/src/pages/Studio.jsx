@@ -90,6 +90,11 @@ export default function AppStudio(){
                 <option value="headbody">Head + Body</option>
                 <option value="leftright">Left / Right</option>
                 <option value="maskblend">Mask Blend (organic)</option>
+                <option value="offset">Offset Split (seedable)</option>
+                <option value="diag">Diagonal Blend</option>
+                <option value="graphcut">Edge-aware Seam (DP)</option>
+                <option value="pyramid">Multi-scale (Laplacian)</option>
+                <option value="parts3">Parts 3 (head/torso/legs)</option>
               </select>
             </div>
             <div style={{flex:1}}>

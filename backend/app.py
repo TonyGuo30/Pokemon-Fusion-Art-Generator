@@ -8,6 +8,7 @@ from PIL import Image, ImageStat, ImageOps, ImageFilter
 from datetime import datetime
 import pathlib
 import colorsys
+import numpy as np
 
 # -------------------- FastAPI app --------------------
 app = FastAPI(title="Fusion Art Simple (Improved)", version="0.2.2")
@@ -29,7 +30,11 @@ CACHE_DIR = pathlib.Path(os.path.dirname(__file__)) / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 # -------------------- Models --------------------
-FusionMethod = Literal["half", "headbody", "leftright", "maskblend"]
+FusionMethod = Literal[
+    "half", "headbody", "leftright", "maskblend",
+    "offset", "diag", "graphcut", "pyramid", "parts3"
+]
+
 StyleName    = Literal["illustrative", "realistic-soft", "sketch"]
 
 class FuseSpec(BaseModel):
@@ -50,6 +55,105 @@ class StyleSpec(BaseModel):
     feather_px: int = Field(6, ge=0)
 
 # -------------------- IO helpers --------------------
+
+def _alpha_from_mask(mask_L: Image.Image) -> Image.Image:
+    """Ensure mask is mode 'L' and in [0..255]."""
+    if mask_L.mode != "L":
+        mask_L = mask_L.convert("L")
+    return mask_L
+
+def _laplacian_pyramid_blend(A: Image.Image, B: Image.Image, mask_L: Image.Image, levels: int = 4) -> Image.Image:
+    """
+    Classic multi-scale blend (no OpenCV): build Gaussian/Laplacian pyramids for A, B, and mask.
+    All inputs are RGBA; mask_L is 'L'. Returns RGBA.
+    """
+    # Convert to RGB arrays (keep original alpha to restore later)
+    a = np.array(A.convert("RGB"), dtype=np.float32) / 255.0
+    b = np.array(B.convert("RGB"), dtype=np.float32) / 255.0
+    m = np.array(_alpha_from_mask(mask_L), dtype=np.float32) / 255.0
+    m = np.repeat(m[..., None], 3, axis=2)  # to 3 channels
+
+    def gaussian(img):
+        from PIL import ImageFilter
+        return np.array(Image.fromarray(np.clip(img*255,0,255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(1)), dtype=np.float32)/255.0
+
+    def build_pyramids(im, L):
+        G = [im]
+        for _ in range(L):
+            G.append(gaussian(G[-1]))
+        # Laplacian = G[i] - G[i+1]
+        P = [G[i] - G[i+1] for i in range(L)]
+        P.append(G[-1])  # top Gaussian
+        return P
+
+    La = build_pyramids(a, levels)
+    Lb = build_pyramids(b, levels)
+    Lm = build_pyramids(m, levels)
+
+    Lblend = [(Lm[i] * La[i] + (1 - Lm[i]) * Lb[i]) for i in range(levels+1)]
+    out = np.zeros_like(lblend := Lblend[-1])
+    out = lblend
+    # Reconstruct by summing (already roughly same size since we keep constant res)
+    for i in range(levels-1, -1, -1):
+        out = out + Lblend[i]
+
+    out = np.clip(out, 0, 1)
+    rgb = (out * 255).astype(np.uint8)
+    # alpha: union of source alphas
+    alpha = np.maximum(np.array(A.split()[-1]), np.array(B.split()[-1]))
+    return Image.merge("RGBA", (Image.fromarray(rgb[...,0]), Image.fromarray(rgb[...,1]), Image.fromarray(rgb[...,2]), Image.fromarray(alpha)))
+
+def _band_cost(imgA: Image.Image, imgB: Image.Image, band: tuple) -> np.ndarray:
+    """
+    Compute per-pixel cost in a narrow vertical band: Euclidean color diff.
+    band = (x0, x1) with full height.
+    """
+    x0, x1 = band
+    A = np.array(imgA.convert("RGB"))[:, x0:x1, :].astype(np.float32)
+    B = np.array(imgB.convert("RGB"))[:, x0:x1, :].astype(np.float32)
+    return np.sqrt(((A - B) ** 2).sum(axis=2))  # H x Wband
+
+def _min_cost_seam(cost: np.ndarray) -> np.ndarray:
+    """
+    Dynamic-programming minimal vertical seam. Returns array 'x_col[y]' with column index within band.
+    cost: H x Wband
+    """
+    H, W = cost.shape
+    dp = cost.copy()
+    back = np.zeros((H, W), dtype=np.int16)
+    for y in range(1, H):
+        for x in range(W):
+            prevs = []
+            idxs = []
+            for dx in (-1, 0, 1):
+                xx = x + dx
+                if 0 <= xx < W:
+                    prevs.append(dp[y-1, xx])
+                    idxs.append(xx)
+            j = int(np.argmin(prevs))
+            dp[y, x] += prevs[j]
+            back[y, x] = idxs[j]
+    seam = np.zeros(H, dtype=np.int16)
+    seam[-1] = int(np.argmin(dp[-1]))
+    for y in range(H-2, -1, -1):
+        seam[y] = back[y+1, seam[y+1]]
+    return seam  # index in [0..Wband-1]
+
+def _mask_from_seam(w: int, h: int, x0: int, seam_cols: np.ndarray, feather: int) -> Image.Image:
+    """
+    Build a left/right matte from seam path. Left of seam is 255; right is 0. Feather draws a blurred alpha.
+    """
+    M = np.zeros((h, w), dtype=np.float32)
+    for y in range(h):
+        seam_x = x0 + int(seam_cols[y])
+        M[y, :seam_x] = 255.0
+    mask = Image.fromarray(M.astype(np.uint8), mode="L")
+    if feather > 0:
+        from PIL import ImageFilter
+        mask = mask.filter(ImageFilter.GaussianBlur(max(0.01, feather/2)))
+    return mask
+
+
 def load_sprite(cid: str) -> Image.Image:
     p = os.path.join(ASSETS, f"{cid}.png")
     if not os.path.exists(p):
@@ -157,6 +261,89 @@ def harmonize_toward(img: Image.Image, target_rgb: Tuple[int,int,int], amount: f
     return out
 
 # -------------------- Fusion utilities --------------------
+
+def fuse_offset(a: Image.Image, b: Image.Image, feather_px: int, vertical=True, frac=0.5) -> Image.Image:
+    """Split at an offset (seed ↔ frac). vertical=True: left/right; else: top/bottom."""
+    w, h = a.size
+    out = Image.new("RGBA", (w, h), (0,0,0,0))
+    if vertical:
+        cut = int(w * frac)
+        out.paste(a.crop((0,0,cut,h)), (0,0), a.crop((0,0,cut,h)))
+        band = b.crop((cut,0,w,h)).copy()
+        if feather_px>0:
+            from PIL import ImageFilter
+            m = Image.new("L", (band.width, band.height), 255).filter(ImageFilter.GaussianBlur(max(0.01, feather_px/2)))
+            band.putalpha(m)
+        out.alpha_composite(band, (cut,0))
+    else:
+        cut = int(h * frac)
+        out.paste(a.crop((0,0,w,cut)), (0,0), a.crop((0,0,w,cut)))
+        band = b.crop((0,cut,w,h)).copy()
+        if feather_px>0:
+            from PIL import ImageFilter
+            m = Image.new("L", (band.width, band.height), 255).filter(ImageFilter.GaussianBlur(max(0.01, feather_px/2)))
+            band.putalpha(m)
+        out.alpha_composite(band, (0,cut))
+    return out
+
+def fuse_diag(a: Image.Image, b: Image.Image, feather_px: int, reverse=False) -> Image.Image:
+    """Simple diagonal matte: top-left A, bottom-right B (or reversed)."""
+    w, h = a.size
+    # build diagonal mask
+    M = np.fromfunction(lambda yy, xx: (xx + (h-yy)) if reverse else (xx + yy), (h, w), dtype=int)
+    M = (M - M.min()) / (M.max() - M.min() + 1e-6)
+    mask = Image.fromarray((M*255).astype(np.uint8), mode="L")
+    if feather_px>0:
+        from PIL import ImageFilter
+        mask = mask.filter(ImageFilter.GaussianBlur(max(0.01, feather_px/2)))
+    return Image.composite(a, b, mask)
+
+def fuse_graphcut(a: Image.Image, b: Image.Image, feather_px: int, band_half=10) -> Image.Image:
+    """Edge-aware seam: find cheapest vertical seam across a narrow band around image center and blend."""
+    w, h = a.size
+    cx = w // 2
+    x0 = max(0, cx - band_half)
+    x1 = min(w, cx + band_half + 1)
+
+    cost = _band_cost(a, b, (x0, x1))           # H x Wband
+    seam_cols = _min_cost_seam(cost)            # H
+    mask = _mask_from_seam(w, h, x0, seam_cols, feather_px)
+
+    return Image.composite(a, b, mask)
+
+def fuse_pyramid(a: Image.Image, b: Image.Image, feather_px: int) -> Image.Image:
+    """Multi-scale (Laplacian pyramid) blend with a soft radial mask."""
+    # soft radial mask
+    mask = radial_mask(a.size, center=(0.52,0.48), sigma=0.40).point(lambda p: p)
+    return _laplacian_pyramid_blend(a, b, mask_L=mask, levels=4)
+
+def fuse_parts3(a: Image.Image, b: Image.Image, feather_px: int) -> Image.Image:
+    """Head from A, torso from B, legs from A (sprite-friendly)."""
+    w, h = a.size
+    head_h   = min(22, h//3)
+    torso_h  = min(26, h//3 + 6)
+    legs_y   = head_h + torso_h
+    out = Image.new("RGBA", (w, h), (0,0,0,0))
+
+    head = a.crop((0,0,w,head_h))
+    torso= b.crop((0,head_h,w,head_h+torso_h))
+    legs = a.crop((0,legs_y,w,h))
+
+    out.paste(torso,(0,head_h),torso)
+    out.paste(head,(0,0),head)
+    out.paste(legs,(0,legs_y),legs)
+
+    if feather_px>0:
+        from PIL import ImageFilter
+        for y0 in (head_h-1, legs_y-1):
+            y0 = max(0, y0); y1 = min(h, y0 + feather_px*2+1)
+            band = out.crop((0,y0,w,y1)).copy()
+            m = Image.new("L", band.size, 255).filter(ImageFilter.GaussianBlur(max(0.01, feather_px/2)))
+            band.putalpha(m)
+            out.alpha_composite(band, (0,y0))
+    return out
+
+
 def fuse_half(a: Image.Image, b: Image.Image, feather_px: int) -> Image.Image:
     w, h = a.size
     out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -241,6 +428,11 @@ def build_fusion(a: Image.Image, b: Image.Image, method: FusionMethod, feather_p
     if method == "headbody":   return fuse_headbody(a,b,feather_px)
     if method == "leftright":  return fuse_leftright(a,b,feather_px)
     if method == "maskblend":  return fuse_maskblend(a,b)
+    if method == "offset":     return fuse_offset(a,b,feather_px, vertical=True, frac=0.45)
+    if method == "diag":       return fuse_diag(a,b,feather_px, reverse=False)
+    if method == "graphcut":   return fuse_graphcut(a,b,feather_px, band_half=12)
+    if method == "pyramid":    return fuse_pyramid(a,b,feather_px)
+    if method == "parts3":     return fuse_parts3(a,b,feather_px)
     return fuse_half(a,b,feather_px)
 
 def unified_palette_color(a: Image.Image, b: Image.Image) -> Tuple[int, int, int]:
