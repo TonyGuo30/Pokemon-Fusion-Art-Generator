@@ -1,3 +1,15 @@
+# Directory Structure
+
+```bash
+├── backend : backend engine
+│   ├── GAN : AI training module based on CycleGAN to perform unpaired Image-to-Image translation
+│   ├── VGG : Neural Style Transfer using a pre-trained VGG19 network
+│   └── fusion : Image merging/fustion using Hugging Faces pretrained diffusion models 
+└── frontend
+    ├── node_modules
+    └── src
+```
+
 # Pokémon Fusion Art — Simple All-Functions Demo
 
 This repo provides a minimal, **fully working** pipeline with:
@@ -17,6 +29,13 @@ python -m pip install -r requirements.txt
 python -m uvicorn app:app --reload
 # http://127.0.0.1:8000/health
 ```
+
+### Fusion Web Demo
+```bash
+python fusion_server.py
+# Then Use web browser to Open ../../frontend/fusion.html
+```
+
 
 ### Frontend (new terminal)
 ```bash
