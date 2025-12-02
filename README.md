@@ -32,8 +32,8 @@ python -m uvicorn app:app --reload
 
 ### Fusion Web Demo
 ```bash
-python fusion_server.py
-# Then Use web browser to Open ../../frontend/fusion.html
+python backend/fusion/fusion_server.py
+# Then Use web browser to Open frontend/fusion.html
 ```
 
 
