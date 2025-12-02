@@ -1,4 +1,11 @@
-# Directory Structure
+# Pokémon Fusion Art — Simple All-Functions Demo
+
+This repo provides a minimal, **fully working** pipeline with:
+- **Fusion:** pixel fusion with simple part masks and palette harmonization (`POST /fuse`).
+- **Style Transfer:** stylized output via `POST /style` (tries PyTorch if installed, otherwise filter-based).
+- **Integration + Web:** a Vite + React UI to run both and preview results.
+
+## Directory Structure
 
 ```bash
 ├── backend : backend engine
@@ -10,12 +17,6 @@
     └── src
 ```
 
-# Pokémon Fusion Art — Simple All-Functions Demo
-
-This repo provides a minimal, **fully working** pipeline with:
-- **Fusion:** pixel fusion with simple part masks and palette harmonization (`POST /fuse`).
-- **Style Transfer:** stylized output via `POST /style` (tries PyTorch if installed, otherwise filter-based).
-- **Integration + Web:** a Vite + React UI to run both and preview results.
 
 ## Run
 
