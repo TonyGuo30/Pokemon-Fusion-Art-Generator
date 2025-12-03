@@ -15,11 +15,11 @@ pip install transformers
 pip install accelerate
 ```
 
-### Fusion Web Demo
+### Fusion Web Demo (legacy)
 ```bash
 # fusion_server opens port 5004
 python fusion_server.py  
-Use web browser to Open ../../frontend/fusion.html
+# (legacy HTML was removed; use the React Modules page hitting FastAPI /diffusion/* instead)
 ```
 
 # Simple

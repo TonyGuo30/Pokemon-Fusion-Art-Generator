@@ -1,12 +1,13 @@
-import io, os, json, hashlib, base64, math
+import io, os, json, hashlib, base64, math, subprocess, sys
 from typing import Tuple, List, Literal
 from datetime import datetime
 import pathlib
 import colorsys
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from PIL import Image, ImageStat, ImageOps, ImageFilter, ImageDraw, ImageFont
 
@@ -28,6 +29,12 @@ CREATURES = [
 # Caching dir
 CACHE_DIR = pathlib.Path(os.path.dirname(__file__)) / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
+
+# Additional module roots
+VGG_OUTPUT = pathlib.Path(os.path.dirname(__file__)) / "VGG" / "output_images"
+GAN_ROOT    = pathlib.Path(os.path.dirname(__file__)) / "GAN"
+GALLERY_DIR = pathlib.Path(os.path.dirname(__file__)).parent / "gallery"
+DIFFUSION_PIPE = None
 
 # -------------------- Models --------------------
 FusionMethod = Literal[
@@ -131,6 +138,43 @@ def load_cache(h: str) -> dict | None:
     if paths["styled"].exists():
         rec["styled"] = b64_of_file(paths["styled"])
     return rec
+
+def list_recent_images(root: pathlib.Path, limit: int = 12):
+    """Return list of images (data URLs) sorted by mtime descending."""
+    if not root.exists():
+        return []
+    exts = (".png", ".jpg", ".jpeg")
+    files = [p for p in root.rglob("*") if p.suffix.lower() in exts and p.is_file()]
+    files = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:max(1, min(limit, 40))]
+    out = []
+    for p in files:
+        try:
+            out.append({"name": str(p.relative_to(root)), "image": b64_of_file(p)})
+        except Exception:
+            continue
+    return out
+
+def _load_diffusion_pipe():
+    """Lazy-load Stable Diffusion Img2Img pipeline."""
+    global DIFFUSION_PIPE
+    if DIFFUSION_PIPE is not None:
+        return DIFFUSION_PIPE
+    try:
+        from diffusers import StableDiffusionImg2ImgPipeline  # type: ignore
+        import torch  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"diffusion dependencies missing: {e}")
+    device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")  # type: ignore[attr-defined]
+    DIFFUSION_PIPE = StableDiffusionImg2ImgPipeline.from_pretrained(
+        "runwayml/stable-diffusion-v1-5",
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+    ).to(device)
+    return DIFFUSION_PIPE
+
+def run_subprocess(cmd: list[str], cwd: pathlib.Path) -> tuple[int, str, str]:
+    """Run a child process and capture output."""
+    proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
+    return proc.returncode, proc.stdout, proc.stderr
 
 # -------------------- Upscalers & backgrounds --------------------
 
@@ -627,6 +671,20 @@ def _fuse_core(spec: FuseSpec) -> Image.Image:
         fused = harmonize_toward(fused, target, spec.harm_amount)
     return fused
 
+def _fuse_from_images(a_img: Image.Image, b_img: Image.Image, method: FusionMethod, harmonize: bool, harm_amount: float, feather_px: int) -> Image.Image:
+    a = _ensure_rgba(a_img)
+    b = _ensure_rgba(b_img)
+    if a.size != b.size:
+        target = (min(a.width, b.width), min(a.height, b.height))
+        target = (max(8, target[0]), max(8, target[1]))
+        a = a.resize(target, Image.NEAREST)
+        b = b.resize(target, Image.NEAREST)
+    fused = build_fusion(a, b, method, feather_px)
+    if harmonize:
+        target = unified_palette_color(a, b)
+        fused = harmonize_toward(fused, target, harm_amount)
+    return fused
+
 # -------------------- Routes --------------------
 @app.get("/health")
 def health():
@@ -685,6 +743,37 @@ def style(spec: StyleSpec):
         pass
     return {"hash": h, "base": png_b64(fused), "styled": png_b64(styled)}
 
+@app.post("/style_upload")
+async def style_upload(
+    imageA: UploadFile = File(...),
+    imageB: UploadFile = File(...),
+    seed: int = Form(0),
+    method: FusionMethod = Form("half"),
+    style: StyleName = Form("illustrative"),
+    harmonize: bool = Form(True),
+    harm_amount: float = Form(0.35),
+    feather_px: int = Form(6),
+):
+    try:
+        a_img = Image.open(io.BytesIO(await imageA.read())).convert("RGBA")
+        b_img = Image.open(io.BytesIO(await imageB.read())).convert("RGBA")
+        fused = _fuse_from_images(
+            a_img, b_img,
+            method=method,
+            harmonize=harmonize,
+            harm_amount=harm_amount,
+            feather_px=feather_px
+        )
+        styled = stylize_filter(fused, style)
+        h = hashlib.sha256(f"{seed}-{imageA.filename}-{imageB.filename}-{method}-{style}".encode()).hexdigest()[:16]
+        try:
+            save_cache(h, {"route": "style_upload", "method": method, "style": style}, base_img=fused, styled_img=styled)
+        except Exception:
+            pass
+        return {"hash": h, "base": png_b64(fused), "styled": png_b64(styled)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"style_upload failed: {e}")
+
 @app.get("/gallery")
 def gallery(n: int = 12):
     items = []
@@ -710,6 +799,115 @@ def image(h: str, kind: Literal["base","styled"]):
     if not p or not p.exists():
         raise HTTPException(404, "not found")
     return {"hash": h, "kind": kind, "image": b64_of_file(p)}
+
+# -------------------- Module galleries (VGG / GAN) --------------------
+@app.get("/vgg/results")
+def vgg_results(n: int = 12):
+    """Return recent VGG NST outputs from output_images/."""
+    items = list_recent_images(VGG_OUTPUT, limit=n)
+    return {"items": items, "count": len(items)}
+
+@app.get("/gan/results")
+def gan_results(n: int = 12):
+    """Return recent GAN outputs across GAN_* folders (result subdirs)."""
+    roots = [p for p in GAN_ROOT.glob("GAN_*") if p.is_dir()]
+    collected = []
+    for r in roots:
+        result_dir = r / "result"
+        collected.extend(list_recent_images(result_dir, limit=n))
+    # trim and keep stable order
+    collected = collected[:max(1, min(n, len(collected)))]
+    return {"items": collected, "count": len(collected)}
+
+# Allow the frontend to list available GAN style folders
+@app.get("/gan/styles")
+def gan_styles():
+    names = [p.name for p in GAN_ROOT.glob("GAN_*") if p.is_dir()]
+    return {"styles": sorted(names)}
+
+# Kick off GAN generation (uses existing trained weights)
+@app.post("/gan/run")
+def gan_run(style: str = "GAN_Ukiyoe"):
+    folder = GAN_ROOT / style
+    script = folder / "cyclegan_gen.py"
+    if not script.exists():
+        raise HTTPException(404, f"GAN style '{style}' not found")
+    code, out, err = run_subprocess([sys.executable, script.name], cwd=script.parent)
+    if code != 0:
+        raise HTTPException(status_code=500, detail=f"GAN generation failed: {err or out}")
+    return {"ok": True, "stdout": out, "stderr": err}
+
+# Kick off VGG NST batch
+@app.post("/vgg/run")
+def vgg_run():
+    script = VGG_OUTPUT.parent / "style_transfer.py"
+    if not script.exists():
+        raise HTTPException(404, "VGG style_transfer.py not found")
+    code, out, err = run_subprocess([sys.executable, script.name], cwd=script.parent)
+    if code != 0:
+        raise HTTPException(status_code=500, detail=f"VGG NST failed: {err or out}")
+    return {"ok": True, "stdout": out, "stderr": err}
+
+# -------------------- Diffusion (img2img) --------------------
+@app.get("/diffusion/samples")
+def diffusion_samples():
+    if not GALLERY_DIR.exists():
+        return {"files": []}
+    files = [p.name for p in GALLERY_DIR.iterdir() if p.suffix.lower() in (".png",".jpg",".jpeg") and p.is_file()]
+    return {"files": sorted(files)}
+
+@app.get("/diffusion/samples/{filename}")
+def diffusion_sample_file(filename: str):
+    p = GALLERY_DIR / filename
+    if not p.exists():
+        raise HTTPException(404, "file not found")
+    return Response(content=p.read_bytes(), media_type="image/png")
+
+@app.post("/diffusion/fuse")
+async def diffusion_fuse(
+    use_samples: bool = Form(False),
+    filenameA: str | None = Form(None),
+    filenameB: str | None = Form(None),
+    prompt: str = Form("fusion creature combining both Pokémon in anime style"),
+    strength: float = Form(0.75),
+    guidance: float = Form(7.5),
+    imageA: UploadFile | None = File(None),
+    imageB: UploadFile | None = File(None),
+):
+    try:
+        pipe = _load_diffusion_pipe()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"diffusion load failed: {e}")
+
+    try:
+        if use_samples:
+            if not filenameA or not filenameB:
+                raise HTTPException(400, "Both filenames required")
+            a_img = Image.open((GALLERY_DIR / filenameA)).convert("RGB")
+            b_img = Image.open((GALLERY_DIR / filenameB)).convert("RGB")
+        else:
+            if not imageA or not imageB:
+                raise HTTPException(400, "Both images required")
+            a_img = Image.open(io.BytesIO(await imageA.read())).convert("RGB")
+            b_img = Image.open(io.BytesIO(await imageB.read())).convert("RGB")
+
+        b_img = b_img.resize(a_img.size)
+        result = pipe(
+            prompt=prompt,
+            image=a_img,
+            strength=float(strength),
+            guidance_scale=float(guidance)
+        ).images[0]
+
+        buf = io.BytesIO()
+        result.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"diffusion fuse failed: {e}")
 
 # -------------------- Export --------------------
 class ExportSpec(BaseModel):

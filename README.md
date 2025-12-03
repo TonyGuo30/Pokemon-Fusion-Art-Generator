@@ -34,7 +34,7 @@ python -m uvicorn app:app --reload
 ### Fusion Web Demo
 ```bash
 python backend/fusion/fusion_server.py
-# Then Use web browser to Open frontend/fusion.html
+# Legacy demo only; current React Modules page uses FastAPI endpoints
 ```
 
 

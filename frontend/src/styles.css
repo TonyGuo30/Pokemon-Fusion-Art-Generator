@@ -48,6 +48,12 @@ nav{
 .section h2{margin:0 0 12px 0}
 .kicker{color:#94a3ff;text-transform:uppercase;letter-spacing:1px;font-weight:800;font-size:12px;margin-bottom:6px;}
 
+.moduleGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.module .tag{display:inline-block;background:rgba(255,255,255,0.08);padding:4px 10px;border-radius:999px;font-size:12px;color:var(--muted);margin-bottom:8px}
+.module h3{margin:4px 0 6px 0}
+.module .actions{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+.codeBlock{background:#0d1020;border:1px solid rgba(255,255,255,0.08);padding:10px;border-radius:12px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-size:12px;white-space:pre;overflow:auto}
+
 .footer{padding:24px 0;color:var(--muted);font-size:14px;text-align:center;border-top:1px solid rgba(255,255,255,0.06);margin-top:36px}
 
 .appPanel{background:var(--panel);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px}

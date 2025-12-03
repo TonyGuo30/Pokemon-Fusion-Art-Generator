@@ -8,10 +8,9 @@ export default function AppStudio(){
   const [health, setHealth] = useState(null)
   const [err, setErr] = useState('')
 
-  // Data
-  const [creatures, setCreatures] = useState([])
-  const [a, setA] = useState('flamara')
-  const [b, setB] = useState('aquaphin')
+  // Local uploads
+  const [fileA, setFileA] = useState(null)
+  const [fileB, setFileB] = useState(null)
   const [seed, setSeed] = useState(0)
 
   // Fusion/style params
@@ -45,7 +44,6 @@ export default function AppStudio(){
     let alive = true
     setErr('')
     setHealth(null)
-    setCreatures([])
 
     // health
     fetch(`${backend}/health`)
@@ -53,34 +51,29 @@ export default function AppStudio(){
       .then(d => { if (alive) setHealth(d) })
       .catch(e => { if (alive) setErr(String(e)) })
 
-    // creatures list
-    fetch(`${backend}/creatures`)
-      .then(r => r.json())
-      .then(list => { if (alive) setCreatures(list) })
-      .catch(e => { if (alive) setErr(String(e)) })
-
     return () => { alive = false }
   }, [backend])
 
-  // Run fusion+style
+  // Run fusion+style using local uploads
   const runAll = async () => {
     setLoading(true); setErr(''); setBaseImg(null); setStyledImg(null); setExportUrl(null)
     try {
-      const body = {
-        parents:[a,b],
-        seed:Number(seed),
-        method,
-        style,
-        harmonize:harm,
-        harm_amount: Number(harmAmount),
-        feather_px: Number(featherPx)
+      if(!fileA || !fileB) throw new Error('Please upload Parent A and Parent B.')
+      const fd = new FormData()
+      fd.append('imageA', fileA)
+      fd.append('imageB', fileB)
+      fd.append('seed', String(seed))
+      fd.append('method', method)
+      fd.append('style', style)
+      fd.append('harmonize', String(harm))
+      fd.append('harm_amount', String(harmAmount))
+      fd.append('feather_px', String(featherPx))
+      const res = await fetch(`${backend}/style_upload`, { method:'POST', body: fd })
+      if(!res.ok){
+        let txt = await res.text()
+        try { const j = JSON.parse(txt); txt = j.detail || txt } catch {}
+        throw new Error(txt)
       }
-      const res = await fetch(`${backend}/style`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(body)
-      })
-      if(!res.ok) throw new Error(await res.text())
       const data = await res.json()
       setBaseImg(data.base || null)
       setStyledImg(data.styled || null)
@@ -115,7 +108,8 @@ export default function AppStudio(){
     setErr(''); setExportUrl(null)
     try{
       const url = await callExport({
-        parents:[a,b],
+        // export by hash is not available here; reuse last styled/base
+        parents:null,
         method, style,
         harmonize: harm, harm_amount: Number(harmAmount),
         feather_px: Number(featherPx),
@@ -131,7 +125,7 @@ export default function AppStudio(){
     setErr(''); setExportUrl(null)
     try{
       const url = await callExport({
-        parents:[a,b],
+        parents:null,
         method, style,
         harmonize: harm, harm_amount: Number(harmAmount),
         feather_px: Number(featherPx),
@@ -149,7 +143,7 @@ export default function AppStudio(){
     setErr(''); setExportUrl(null)
     try{
       const url = await callExport({
-        parents:[a,b],
+        parents:null,
         method, style,
         harmonize: harm, harm_amount: Number(harmAmount),
         feather_px: Number(featherPx),
@@ -202,16 +196,12 @@ export default function AppStudio(){
           {/* Parents */}
           <div className="row">
             <div style={{flex:1}}>
-              <label>Parent A</label>
-              <select value={a} onChange={e=>setA(e.target.value)}>
-                {creatures.map(c=> <option key={c.id} value={c.id}>{c.name} ({c.id})</option>)}
-              </select>
+              <label>Parent A (upload)</label>
+              <input type="file" accept="image/*" onChange={e=>setFileA(e.target.files?.[0]||null)} />
             </div>
             <div style={{flex:1}}>
-              <label>Parent B</label>
-              <select value={b} onChange={e=>setB(e.target.value)}>
-                {creatures.map(c=> <option key={c.id} value={c.id}>{c.name} ({c.id})</option>)}
-              </select>
+              <label>Parent B (upload)</label>
+              <input type="file" accept="image/*" onChange={e=>setFileB(e.target.files?.[0]||null)} />
             </div>
           </div>
 
@@ -301,47 +291,6 @@ export default function AppStudio(){
             <h3>Stage 2 — Styled Output</h3>
             {styledImg ? <img className="pixel" src={styledImg} width={256} height={256} alt="styled output"/> : <p className="muted">—</p>}
           </div>
-        </div>
-
-        {/* Export panel */}
-        <div className="card" style={{marginTop:16}}>
-          <h3>Export</h3>
-          <div className="row">
-            <div style={{flex:1}}>
-              <label>Upscaler</label>
-              <select value={upscaler} onChange={e=>setUpscaler(e.target.value)}>
-                <option value="pxnn">Pixel NN (crisp)</option>
-                <option value="scale2x">Scale2x (edge-aware)</option>
-                <option value="lanczos_edge">Lanczos (edge-protected)</option>
-              </select>
-            </div>
-            <div style={{flex:1}}>
-              <label>Scale</label>
-              <input type="number" min="2" max="8" step="1" value={scale} onChange={e=>setScale(e.target.value)} />
-            </div>
-            <div style={{flex:1}}>
-              <label>Background</label>
-              <select value={bg} onChange={e=>setBg(e.target.value)}>
-                <option value="none">Transparent</option>
-                <option value="halo">Halo</option>
-                <option value="sunset">Sunset</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="row" style={{marginTop:8, gap:8}}>
-            <button className="action" onClick={doExport} disabled={loading}>Export PNG</button>
-            <button className="action" onClick={doCard} disabled={loading}>Make Card</button>
-            <button className="action" onClick={doGif} disabled={loading}>Idle GIF</button>
-            <button className="action" disabled={!canDownload} onClick={()=>downloadDataUrl(exportUrl, dlName)}>Download</button>
-          </div>
-
-          {exportUrl && (
-            <div style={{marginTop:12}}>
-              {/* Show PNG or GIF */}
-              <img src={exportUrl} alt="export" className="pixel" style={{maxWidth:'100%'}}/>
-            </div>
-          )}
         </div>
       </div>
     </div>
