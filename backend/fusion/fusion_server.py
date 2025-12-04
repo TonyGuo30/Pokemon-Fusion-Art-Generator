@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Configure gallery folder
-GALLERY_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'gallery')
+GALLERY_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'gallery/content_images')
 
 print("Gallery Folder", GALLERY_FOLDER)
 
