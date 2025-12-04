@@ -20,20 +20,27 @@ export default function Home(){
         <div>
           <div className="kicker">CS566 Project</div>
           <h1>Pokémon Fusion Art Generator</h1>
-          <p>We build a two-stage pipeline: (1) coherent pixel fusion with palette harmonization and part composition, then (2) style transfer that turns the sprite into a higher-fidelity illustration.</p>
+          <p className="muted" style={{marginBottom:6}}>Team: Tony Guo (hguo246) • Zhiyi Lai (zlai26) • Hua Zhou (hzhou397)</p>
+          <p>Two-stage system: palette-coherent pixel fusion, then style transfer to lift sprites into richer art. All modules (Fusion, Diffusion, VGG, GAN) run from this React app.</p>
           <div style={{display:'flex', gap:12}}>
             <Link className="btn" to="/modules">Launch Demo</Link>
-            <a className="btn secondary" href="#modules">See the modules</a>
+            <a className="btn secondary" href="#modules">Modules</a>
+          </div>
+          <div className="pillRow">
+            <div className="pill">Fusion</div>
+            <div className="pill">Diffusion</div>
+            <div className="pill">VGG NST</div>
+            <div className="pill">CycleGAN styles</div>
           </div>
         </div>
         <div className="card">
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
-            <div className="card" style={{background:'rgba(255,255,255,0.04)'}}>
+            <div className="card" style={{background:'rgba(255,255,255,0.03)'}}>
               <small className="muted">Stage 1</small>
               <div style={{fontWeight:700}}>Pixel Fusion</div>
               <div style={{fontSize:13,color:'#a9b2d3'}}>Parts + palette harmonization</div>
             </div>
-            <div className="card" style={{background:'rgba(255,255,255,0.04)'}}>
+            <div className="card" style={{background:'rgba(255,255,255,0.03)'}}>
               <small className="muted">Stage 2</small>
               <div style={{fontWeight:700}}>Style Transfer</div>
               <div style={{fontSize:13,color:'#a9b2d3'}}>Illustrative or soft-realistic</div>
@@ -45,7 +52,7 @@ export default function Home(){
 
       <section id="modules" className="section">
         <h2>Modules & Demos</h2>
-        <p className="muted">Three independent components you can run and compare. Each button jumps to a runnable demo or shows how to execute the module.</p>
+        <p className="muted">Three components you can run and compare. Use the Modules page for all demos.</p>
         <div className="moduleGrid">
           <div className="card module">
             <div className="tag">Fusion (FastAPI)</div>
@@ -87,36 +94,41 @@ export default function Home(){
         </div>
       </section>
 
+      <section className="section">
+        <h2>Team</h2>
+        <p className="muted">CS566 — Tony Guo (hguo246), Zhiyi Lai (zlai26), Hua Zhou (hzhou397)</p>
+      </section>
+
       <section id="motivation" className="section">
         <h2>Motivation</h2>
-        <p className="muted">Naïve sprite fusions often look like cut-and-paste collages with clashing colors and broken edges. We aim for <em>cohesive</em> fusions through palette harmonization, seam blending, and anchor-based composition — then explore higher-fidelity looks via style transfer.</p>
+        <p className="muted">Naïve fusion tools are collage-like: clashing palettes, broken seams, low fidelity. We pursue cohesive pixel fusions and then “lift” them into richer styles.</p>
       </section>
 
       <section id="approach" className="section">
         <h2>Approach</h2>
         <div className="grid">
           <div className="card">
-            <h3>Pixel Fusion</h3>
+            <h3>Problem & Goals</h3>
             <ul>
-              <li>Part composition (head/body/limbs) via anchors</li>
-              <li>Palette harmonization (OKLCH-ish constraints)</li>
-              <li>Edge-aware seam smoothing</li>
+              <li>Fix aesthetic incoherence (palette + structure).</li>
+              <li>Go beyond low-fi sprites via style transfer.</li>
+              <li>Deliver reproducible, hashable outputs.</li>
             </ul>
           </div>
           <div className="card">
-            <h3>Style Transfer</h3>
+            <h3>Solution Plan</h3>
             <ul>
-              <li>Upscale + content preservation</li>
-              <li>Preset styles: illustrative / soft-realistic</li>
-              <li>Face/eye preservation tweaks</li>
+              <li>Part-aware fusion (head/body/limbs) + palette harmonization.</li>
+              <li>Seam feathering, shading normalization.</li>
+              <li>Style transfer: VGG NST, CycleGAN styles, diffusion img2img.</li>
             </ul>
           </div>
           <div className="card">
-            <h3>Integration</h3>
+            <h3>Why it Matters</h3>
             <ul>
-              <li>Deterministic spec → stable hash</li>
-              <li>Demo app + gallery (local)</li>
-              <li>Portable assets (original sprites)</li>
+              <li>Gives artists coherent fusions and mod-friendly assets.</li>
+              <li>Enables exploration of higher-fidelity variants.</li>
+              <li>Teaches reproducible creative pipelines.</li>
             </ul>
           </div>
         </div>
@@ -124,41 +136,98 @@ export default function Home(){
 
       <section id="implementation" className="section">
         <h2>Implementation</h2>
-        <p className="muted">Backend: FastAPI endpoints <code>/fuse</code> and <code>/style</code>. Frontend: React + Vite. All endpoints return base64 PNGs. Assets are original procedural sprites.</p>
+        <div className="grid">
+          <div className="card">
+            <h3>Fusion (FastAPI)</h3>
+            <ul>
+              <li>Endpoints: <code>/fuse</code>, <code>/style</code>, <code>/style_upload</code>, <code>/export</code>.</li>
+              <li>Methods: half / headbody / leftright / maskblend / diag / graphcut / pyramid / parts3.</li>
+              <li>Palette harmonization + seam feathering; upscalers + backgrounds.</li>
+            </ul>
+            <pre className="codeBlock">{`# style_upload (FastAPI)
+@app.post("/style_upload")
+async def style_upload(imageA: UploadFile, imageB: UploadFile, method: str="half"):
+    a = Image.open(io.BytesIO(await imageA.read())).convert("RGBA")
+    b = Image.open(io.BytesIO(await imageB.read())).convert("RGBA")
+    fused  = _fuse_from_images(a, b, method, True, 0.35, 6)
+    styled = stylize_filter(fused, "illustrative")
+    return {"base": png_b64(fused), "styled": png_b64(styled)}`}</pre>
+          </div>
+          <div className="card">
+            <h3>Diffusion (Img2Img)</h3>
+            <ul>
+              <li>Stable Diffusion img2img via <code>/diffusion/fuse</code>.</li>
+              <li>Prompt, strength, guidance; uploads or samples.</li>
+            </ul>
+            <pre className="codeBlock">{`# React call (Modules page)
+const fd = new FormData();
+fd.append('imageA', fileA);
+fd.append('imageB', fileB);
+fd.append('prompt', prompt);
+fd.append('strength', strength);
+fd.append('guidance', guidance);
+fetch(\`\${backend}/diffusion/fuse\`, { method:'POST', body: fd });`}</pre>
+          </div>
+          <div className="card">
+            <h3>VGG NST & GAN</h3>
+            <ul>
+              <li>VGG19 batch NST: <code>/vgg/run</code>, results at <code>/vgg/results</code>.</li>
+              <li>CycleGAN style banks (Ghibli / Pointillism / Ukiyoe): <code>/gan/run</code>, <code>/gan/results</code>.</li>
+            </ul>
+            <pre className="codeBlock">{`# VGG NST runner
+python backend/VGG/style_transfer.py
+
+# GAN generator (style folder)
+python backend/GAN/GAN_Ukiyoe/cyclegan_gen.py`}</pre>
+          </div>
+          <div className="card">
+            <h3>Frontend (React + Vite)</h3>
+            <ul>
+              <li>/modules: run Fusion, Diffusion, VGG, GAN.</li>
+              <li>/app: Fusion Studio with local uploads.</li>
+              <li>Bright, responsive layout.</li>
+            </ul>
+            <pre className="codeBlock">{`// Studio uploads -> /style_upload
+const fd = new FormData();
+fd.append('imageA', fileA);
+fd.append('imageB', fileB);
+fd.append('method', method);
+fd.append('style', style);
+fetch(\`\${backend}/style_upload\`, { method:'POST', body: fd });`}</pre>
+          </div>
+        </div>
       </section>
 
       <section id="results" className="section">
-        <h2>Results</h2>
+        <h2>Results & Comparisons</h2>
         <div className="grid">
-          <div className="card"><strong>Pixel Fusion Grid</strong><br/><small className="muted">20 examples; reduced clashing via harmonization.</small></div>
-          <div className="card"><strong>Before/After Seams</strong><br/><small className="muted">Feathered edges remove sticker look.</small></div>
-          <div className="card"><strong>Style Variants</strong><br/><small className="muted">Illustrative vs. Soft Realistic presets.</small></div>
-          <div className="card"><strong>GAN Styles</strong><br/><small className="muted">Ghibli vs. Pointillism vs. Ukiyoe trained from sprites.</small></div>
-          <div className="card"><strong>VGG NST</strong><br/><small className="muted">Batch style transfer sweeps with tunable style/content weights.</small></div>
+          <div className="card"><strong>Pixel Fusion Grid</strong><br/><small className="muted">Palette harmonization vs. naïve cut/paste.</small></div>
+          <div className="card"><strong>Seam Feathering</strong><br/><small className="muted">Before/after edge-aware blending.</small></div>
+          <div className="card"><strong>Style Variants</strong><br/><small className="muted">Illustrative vs. soft-realistic presets.</small></div>
+          <div className="card"><strong>GAN Styles</strong><br/><small className="muted">Ghibli / Pointillism / Ukiyoe translations.</small></div>
+          <div className="card"><strong>VGG NST</strong><br/><small className="muted">Batch runs with tunable content/style weights.</small></div>
         </div>
       </section>
 
       <section id="challenges" className="section">
-        <h2>Problems & Discussion</h2>
+        <h2>Problems Encountered</h2>
         <ul>
-          <li>Small features can blur under heavy style; we tune content weights.</li>
-          <li>Odd silhouettes (wings/tails) sometimes cause gaps; masks help.</li>
-          <li>Runtime vs. quality trade-offs; we cache by hash.</li>
+          <li>Small features can blur under heavy style; tuned content weights and face/eye preservation.</li>
+          <li>Odd silhouettes create gaps; masks and feathering help.</li>
+          <li>Runtime vs. quality trade-offs; cached by hash and offered light/heavy presets.</li>
         </ul>
       </section>
 
       <section id="findings" className="section">
-        <h2>Interesting Findings / Comparisons</h2>
+        <h2>Interesting Findings</h2>
         <ul>
-          <li>Harmonized palettes improve perceived cohesion on more than 80% of pairs.</li>
+          <li>Palette harmonization improves perceived cohesion on most pairs.</li>
           <li>Edge-aware seams matter more than expected for visual quality.</li>
-          <li>Two curated styles are more reliable than many noisy ones.</li>
+          <li>A small curated style set outperforms many noisy ones.</li>
         </ul>
       </section>
 
-      <div style={{textAlign:'center',marginTop:20}}>
-        <Link className="btn" to="/app">Launch the Demo</Link>
-      </div>
+      {/* Timeline removed per request */}
     </div>
   )
 }
