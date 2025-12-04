@@ -55,8 +55,6 @@ export default function Home(){
               <Link className="btn" to="/app">Open Studio</Link>
               <a className="btn secondary" href="#implementation">Implementation details</a>
             </div>
-            <pre className="codeBlock">cd backend
-uvicorn app:app --reload</pre>
           </div>
 
           <div className="card module">
@@ -67,7 +65,6 @@ uvicorn app:app --reload</pre>
               <Link className="btn" to="/modules">Open Modules</Link>
               <a className="btn secondary" href="#results">See outputs</a>
             </div>
-            <pre className="codeBlock">Run FastAPI (above) then use Modules page</pre>
           </div>
 
           <div className="card module">
@@ -77,8 +74,6 @@ uvicorn app:app --reload</pre>
             <div className="actions">
               <a className="btn secondary" href="#results">View results section</a>
             </div>
-            <pre className="codeBlock">cd backend/VGG
-python style_transfer.py</pre>
           </div>
 
           <div className="card module">
@@ -88,9 +83,6 @@ python style_transfer.py</pre>
             <div className="actions">
               <a className="btn secondary" href="#results">Check comparisons</a>
             </div>
-            <pre className="codeBlock">cd backend/GAN/GAN_Ukiyoe
-python cyclegan_gen.py
-# or other GAN_* styles</pre>
           </div>
         </div>
       </section>
