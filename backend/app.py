@@ -671,14 +671,33 @@ def _fuse_core(spec: FuseSpec) -> Image.Image:
         fused = harmonize_toward(fused, target, spec.harm_amount)
     return fused
 
+def _prep_upload_imgs(a_img: Image.Image, b_img: Image.Image, max_side: int = 512) -> Tuple[Image.Image, Image.Image]:
+    """Center-crop both uploads to squares, then resize to a shared side length.
+
+    This keeps different aspect ratios aligned and avoids silent mismatches when users
+    upload very different source sizes.
+    """
+    def _center_square(img: Image.Image) -> Image.Image:
+        w, h = img.size
+        side = max(1, min(w, h))
+        x0 = max(0, (w - side) // 2)
+        y0 = max(0, (h - side) // 2)
+        return img.crop((x0, y0, x0 + side, y0 + side))
+
+    a_sq = _center_square(_ensure_rgba(a_img))
+    b_sq = _center_square(_ensure_rgba(b_img))
+
+    target_side = max(8, min(max_side, min(a_sq.width, b_sq.width)))
+
+    def _fit(img: Image.Image) -> Image.Image:
+        if img.width == target_side and img.height == target_side:
+            return img
+        return img.resize((target_side, target_side), Image.NEAREST)
+
+    return _fit(a_sq), _fit(b_sq)
+
 def _fuse_from_images(a_img: Image.Image, b_img: Image.Image, method: FusionMethod, harmonize: bool, harm_amount: float, feather_px: int) -> Image.Image:
-    a = _ensure_rgba(a_img)
-    b = _ensure_rgba(b_img)
-    if a.size != b.size:
-        target = (min(a.width, b.width), min(a.height, b.height))
-        target = (max(8, target[0]), max(8, target[1]))
-        a = a.resize(target, Image.NEAREST)
-        b = b.resize(target, Image.NEAREST)
+    a, b = _prep_upload_imgs(a_img, b_img)
     fused = build_fusion(a, b, method, feather_px)
     if harmonize:
         target = unified_palette_color(a, b)
@@ -755,8 +774,11 @@ async def style_upload(
     feather_px: int = Form(6),
 ):
     try:
-        a_img = Image.open(io.BytesIO(await imageA.read())).convert("RGBA")
-        b_img = Image.open(io.BytesIO(await imageB.read())).convert("RGBA")
+        a_bytes = await imageA.read()
+        b_bytes = await imageB.read()
+
+        a_img = Image.open(io.BytesIO(a_bytes)).convert("RGBA")
+        b_img = Image.open(io.BytesIO(b_bytes)).convert("RGBA")
         fused = _fuse_from_images(
             a_img, b_img,
             method=method,
@@ -765,12 +787,29 @@ async def style_upload(
             feather_px=feather_px
         )
         styled = stylize_filter(fused, style)
-        h = hashlib.sha256(f"{seed}-{imageA.filename}-{imageB.filename}-{method}-{style}".encode()).hexdigest()[:16]
+        h = hashlib.sha256()
+        h.update(str(seed).encode())
+        h.update(str(method).encode())
+        h.update(str(style).encode())
+        h.update(str(harmonize).encode())
+        h.update(str(harm_amount).encode())
+        h.update(str(feather_px).encode())
+        # Use a slice of the content so different files with the same filename don't collide
+        h.update(a_bytes[:4096])
+        h.update(b_bytes[:4096])
+        digest = h.hexdigest()[:16]
         try:
-            save_cache(h, {"route": "style_upload", "method": method, "style": style}, base_img=fused, styled_img=styled)
+            save_cache(digest, {
+                "route": "style_upload",
+                "method": method,
+                "style": style,
+                "harmonize": harmonize,
+                "harm_amount": harm_amount,
+                "feather_px": feather_px
+            }, base_img=fused, styled_img=styled)
         except Exception:
             pass
-        return {"hash": h, "base": png_b64(fused), "styled": png_b64(styled)}
+        return {"hash": digest, "base": png_b64(fused), "styled": png_b64(styled)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"style_upload failed: {e}")
 
